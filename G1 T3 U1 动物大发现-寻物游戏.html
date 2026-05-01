@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Animal Discovery - Hidden Object Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            user-select: none; /* 防止选中文本 */
+            overflow: hidden; /* 防止滚动 */
+        }
+
+        /* 游戏区域背景 */
+        .bg-level-1 { background: linear-gradient(to bottom, #87CEEB, #E0F6FF); } /* 天空 */
+        .bg-level-2 { background: linear-gradient(to bottom, #90EE90, #E8F8F5); } /* 草地 */
+        .bg-level-3 { background: linear-gradient(to bottom, #F4D03F, #FDEBD0); } /* 沙漠/荒野 */
+        .bg-level-4 { background: linear-gradient(135deg, #FFB6C1, #87CEFA, #98FB98); } /* 梦幻综合 */
+
+        /* 物品样式 */
+        .game-item {
+            position: absolute;
+            font-size: 2.5rem;
+            cursor: pointer;
+            transition: transform 0.2s;
+            line-height: 1;
+            /* 添加一点文字阴影让emoji更立体 */
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2); 
+        }
+
+        .game-item:hover {
+            transform: scale(1.1);
+        }
+
+        .game-item.found-anim {
+            animation: popOut 0.5s ease forwards;
+            pointer-events: none;
+        }
+
+        /* 提示高亮动画 */
+        .hint-anim {
+            animation: pulseGlow 1.5s infinite;
+            z-index: 50;
+        }
+
+        @keyframes popOut {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 1; }
+            100% { transform: scale(0); opacity: 0; }
+        }
+
+        @keyframes pulseGlow {
+            0% { transform: scale(1); filter: drop-shadow(0 0 5px yellow) drop-shadow(0 0 10px red); }
+            50% { transform: scale(1.3); filter: drop-shadow(0 0 15px yellow) drop-shadow(0 0 20px red); }
+            100% { transform: scale(1); filter: drop-shadow(0 0 5px yellow) drop-shadow(0 0 10px red); }
+        }
+
+        /* 拼音展示优化 */
+        rt {
+            font-size: 0.6em;
+            color: #666;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen bg-gray-100 flex items-center justify-center">
+
+    <!-- 屏幕容器 -->
+    <div id="app-container" class="w-full h-full max-w-6xl max-h-[900px] bg-white shadow-2xl overflow-hidden relative flex flex-col sm:flex-row">
+        
+        <!-- 开始屏幕 -->
+        <div id="start-screen" class="absolute inset-0 z-50 bg-white flex flex-col items-center justify-center">
+            <h1 class="text-5xl font-bold text-blue-600 mb-8">🦁 Animal Discovery 🐦</h1>
+            <p class="text-xl text-gray-600 mb-8">Find all the animals on the list!</p>
+            <button onclick="initGame()" class="px-8 py-4 bg-blue-500 hover:bg-blue-600 text-white rounded-full text-2xl font-bold shadow-lg transform transition hover:scale-105 active:scale-95">
+                Start Game
+            </button>
+        </div>
+
+        <!-- 通关/失败提示模态框 -->
+        <div id="modal-screen" class="absolute inset-0 z-50 bg-black bg-opacity-60 hidden flex items-center justify-center">
+            <div class="bg-white rounded-2xl p-8 text-center max-w-sm w-full shadow-2xl transform transition-all scale-95">
+                <h2 id="modal-title" class="text-3xl font-bold mb-4"></h2>
+                <p id="modal-msg" class="text-lg text-gray-600 mb-6"></p>
+                <button id="modal-btn" class="px-6 py-3 bg-green-500 hover:bg-green-600 text-white rounded-full text-xl font-bold shadow-md w-full">
+                    Next Level
+                </button>
+            </div>
+        </div>
+
+        <!-- 侧边栏：寻找清单 -->
+        <div id="sidebar" class="w-full sm:w-64 bg-white shadow-md p-4 flex flex-col z-10 border-r border-gray-200 hidden sm:flex h-48 sm:h-auto overflow-y-auto">
+            <div class="mb-4 text-center">
+                <h2 class="text-xl font-bold text-gray-800" id="level-title">Level 1</h2>
+                <p class="text-sm text-gray-500">Search List</p>
+            </div>
+            <div id="target-list" class="flex-1 flex flex-col gap-3">
+                <!-- 目标项将通过JS动态插入 -->
+            </div>
+            <div class="mt-4 pt-4 border-t border-gray-200">
+                <button onclick="useHint()" id="hint-btn" class="w-full py-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 rounded-lg font-bold shadow flex items-center justify-center gap-2 transition">
+                    💡 Hint (<span id="hints-count">2</span>)
+                </button>
+            </div>
+        </div>
+
+        <!-- 移动端顶部状态栏 (响应式设计) -->
+        <div class="sm:hidden w-full bg-white shadow p-2 flex justify-between items-center z-10 hidden" id="mobile-header">
+             <span class="font-bold" id="mobile-level-title">Level 1</span>
+             <button onclick="useHint()" id="mobile-hint-btn" class="px-3 py-1 bg-yellow-400 text-yellow-900 rounded font-bold text-sm">💡 (<span id="mobile-hints-count">2</span>)</button>
+        </div>
+        <!-- 移动端横向滑动目标列表 -->
+        <div class="sm:hidden w-full bg-gray-50 border-b p-2 flex gap-4 overflow-x-auto z-10 hidden shadow-inner" id="mobile-target-list">
+             <!-- 目标项将通过JS动态插入 -->
+        </div>
+
+        <!-- 游戏主区域 -->
+        <div id="game-board" class="flex-1 relative overflow-hidden hidden bg-level-1">
+            <!-- 动物emoji将渲染在这里 -->
+        </div>
+
+    </div>
+
+    <script>
+        // 动物主词典 (带拼音)
+        const animalsData = {
+            bird: { id: 'bird', name: '鸟', pinyin: 'niǎo', emoji: '🐦' },
+            fish: { id: 'fish', name: '鱼', pinyin: 'yú', emoji: '🐟' },
+            horse: { id: 'horse', name: '马', pinyin: 'mǎ', emoji: '🐴' },
+            cat: { id: 'cat', name: '猫', pinyin: 'māo', emoji: '🐱' },
+            dog: { id: 'dog', name: '狗', pinyin: 'gǒu', emoji: '🐶' },
+            cow: { id: 'cow', name: '牛', pinyin: 'niú', emoji: '🐮' },
+            sheep: { id: 'sheep', name: '羊', pinyin: 'yáng', emoji: '🐑' },
+            panda: { id: 'panda', name: '熊猫', pinyin: 'xióng māo', emoji: '🐼' },
+            camel: { id: 'camel', name: '骆驼', pinyin: 'luò tuó', emoji: '🐪' },
+            tiger: { id: 'tiger', name: '老虎', pinyin: 'lǎo hǔ', emoji: '🐯' }
+        };
+
+        // 干扰项字典 (移除了与猪有关的emoji)
+        const distractorsData = ['🦋', '🐞', '🐢', '🐸', '🐌', '🐛', '🐜', '🐝', '🦊', '🐻', '🦁', '🐭', '🐹', '🐰', '🐵', '🐿️', '🦔', '🦉', '🦆'];
+
+        // 关卡配置 (增加10%干扰项密度)
+        const levels = [
+            { 
+                id: 1, 
+                title: "Level 1: Sky & Water", 
+                bgClass: "bg-level-1",
+                targets: [{id: 'bird', count: 2}, {id: 'fish', count: 2}, {id: 'horse', count: 2}],
+                distractorsCount: 61
+            },
+            { 
+                id: 2, 
+                title: "Level 2: Farm Friends", 
+                bgClass: "bg-level-2",
+                targets: [{id: 'cat', count: 2}, {id: 'dog', count: 2}, {id: 'cow', count: 2}, {id: 'sheep', count: 2}],
+                distractorsCount: 58
+            },
+            { 
+                id: 3, 
+                title: "Level 3: Wild World", 
+                bgClass: "bg-level-3",
+                targets: [{id: 'panda', count: 3}, {id: 'camel', count: 3}, {id: 'tiger', count: 3}],
+                distractorsCount: 66
+            },
+            { 
+                id: 4, 
+                title: "Level 4: Animal Gathering", 
+                bgClass: "bg-level-4",
+                targets: [
+                    {id: 'bird', count: 1}, {id: 'fish', count: 1}, {id: 'horse', count: 1},
+                    {id: 'cat', count: 1}, {id: 'dog', count: 1}, {id: 'cow', count: 1}, {id: 'sheep', count: 1},
+                    {id: 'panda', count: 1}, {id: 'camel', count: 1}, {id: 'tiger', count: 1}
+                ],
+                distractorsCount: 61
+            }
+        ];
+
+        // 游戏状态
+        let currentLevelIndex = 0;
+        let hintsRemaining = 2;
+        let currentTargets = {}; // 记录当前关卡还需寻找的目标 { 'bird': 2, ... }
+        let isGameRunning = false;
+        let activeHintElement = null; // 当前被高亮的元素
+
+        // 语音合成配置
+        const synth = window.speechSynthesis;
+
+        // 初始化游戏（点击开始按钮后调用，解决浏览器自动播放策略限制）
+        function initGame() {
+            // 尝试初始化一个无声语音，唤醒API
+            let u = new SpeechSynthesisUtterance('');
+            synth.speak(u);
+
+            document.getElementById('start-screen').classList.add('hidden');
+            
+            // 移除了错误修改 sidebar display 的代码，让 Tailwind 的 `hidden sm:flex` 原生响应式生效
+            
+            document.getElementById('mobile-header').classList.remove('hidden');
+            document.getElementById('mobile-target-list').classList.remove('hidden');
+            document.getElementById('game-board').classList.remove('hidden');
+            
+            startLevel(0);
+        }
+
+        // 播放语音
+        function speakWord(text) {
+            if (synth.speaking) {
+                synth.cancel(); // 如果正在播，打断它
+            }
+            const utterThis = new SpeechSynthesisUtterance(text);
+            utterThis.lang = 'zh-CN';
+            utterThis.rate = 0.5; // 0.5倍速
+            synth.speak(utterThis);
+        }
+
+        // 开始关卡
+        function startLevel(index) {
+            if (index >= levels.length) {
+                return;
+            }
+
+            currentLevelIndex = index;
+            const levelConfig = levels[index];
+            hintsRemaining = 2;
+            isGameRunning = true;
+            activeHintElement = null;
+
+            // 更新背景
+            const board = document.getElementById('game-board');
+            board.className = `flex-1 relative overflow-hidden ${levelConfig.bgClass}`;
+            board.innerHTML = ''; // 清空棋盘
+
+            // 初始化目标状态
+            currentTargets = {};
+            levelConfig.targets.forEach(t => {
+                currentTargets[t.id] = t.count;
+            });
+
+            // 更新UI
+            updateUI();
+
+            // 生成物品
+            generateBoardItems(levelConfig);
+        }
+
+        // 更新界面（标题、提示次数、寻找清单）
+        function updateUI() {
+            const levelConfig = levels[currentLevelIndex];
+            
+            document.getElementById('level-title').innerText = levelConfig.title;
+            document.getElementById('mobile-level-title').innerText = levelConfig.title;
+            
+            document.getElementById('hints-count').innerText = hintsRemaining;
+            document.getElementById('mobile-hints-count').innerText = hintsRemaining;
+
+            const hintBtn = document.getElementById('hint-btn');
+            const mobileHintBtn = document.getElementById('mobile-hint-btn');
+            if (hintsRemaining <= 0) {
+                hintBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                mobileHintBtn.classList.add('opacity-50');
+            } else {
+                hintBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                mobileHintBtn.classList.remove('opacity-50');
+            }
+
+            renderTargetList();
+        }
+
+        // 渲染侧边栏和顶部的目标列表
+        function renderTargetList() {
+            const levelConfig = levels[currentLevelIndex];
+            const desktopList = document.getElementById('target-list');
+            const mobileList = document.getElementById('mobile-target-list');
+            
+            let html = '';
+            let mobileHtml = '';
+
+            levelConfig.targets.forEach(t => {
+                const data = animalsData[t.id];
+                const total = t.count;
+                const remaining = currentTargets[t.id];
+                const found = total - remaining;
+                const isComplete = remaining === 0;
+
+                const opacityClass = isComplete ? 'opacity-40 grayscale' : '';
+                const checkMark = isComplete ? '✅' : '';
+
+                // 桌面端样式
+                html += `
+                    <div class="flex items-center justify-between p-2 rounded-lg bg-gray-50 border border-gray-100 ${opacityClass} transition-all">
+                        <div class="flex items-center gap-3">
+                            <span class="text-3xl">${data.emoji}</span>
+                            <div class="flex flex-col">
+                                <ruby class="text-lg font-bold">${data.name}<rt>${data.pinyin}</rt></ruby>
+                            </div>
+                        </div>
+                        <div class="text-sm font-bold text-gray-500">
+                            ${found} / ${total} ${checkMark}
+                        </div>
+                    </div>
+                `;
+
+                // 移动端样式
+                mobileHtml += `
+                    <div class="flex flex-col items-center flex-shrink-0 ${opacityClass}">
+                        <span class="text-2xl">${data.emoji}</span>
+                        <ruby class="text-xs font-bold leading-none mt-1">${data.name}<rt>${data.pinyin}</rt></ruby>
+                        <span class="text-[10px] text-gray-500 mt-1">${found}/${total}</span>
+                    </div>
+                `;
+            });
+
+            desktopList.innerHTML = html;
+            mobileList.innerHTML = mobileHtml;
+        }
+
+        // 生成棋盘物品
+        function generateBoardItems(levelConfig) {
+            const board = document.getElementById('game-board');
+            const itemsToPlace = [];
+
+            // 1. 放入目标物品
+            levelConfig.targets.forEach(t => {
+                for (let i = 0; i < t.count; i++) {
+                    itemsToPlace.push({
+                        isTarget: true,
+                        id: t.id,
+                        emoji: animalsData[t.id].emoji,
+                        word: animalsData[t.id].name
+                    });
+                }
+            });
+
+            // 2. 放入干扰物品
+            for (let i = 0; i < levelConfig.distractorsCount; i++) {
+                const randomDistractor = distractorsData[Math.floor(Math.random() * distractorsData.length)];
+                itemsToPlace.push({
+                    isTarget: false,
+                    id: 'distractor',
+                    emoji: randomDistractor,
+                    word: ''
+                });
+            }
+
+            // 打乱顺序
+            itemsToPlace.sort(() => Math.random() - 0.5);
+
+            const placedPositions = []; // 记录已放置的位置，用于防重叠检测
+
+            // 在固定区域内随机放置
+            // 为了防止元素溢出边界，限制在 5% 到 90% 的范围内
+            itemsToPlace.forEach(itemData => {
+                const el = document.createElement('div');
+                el.className = 'game-item';
+                el.innerText = itemData.emoji;
+                
+                if (itemData.isTarget) {
+                    el.dataset.targetId = itemData.id;
+                    el.dataset.word = itemData.word;
+                    el.style.zIndex = '10'; // 关键修复1：确保目标物品始终在干扰项上方，防止被盖住无法点击
+                } else {
+                    el.style.zIndex = '1';  // 干扰项设置在底层
+                }
+
+                // 关键修复2：简单的防重叠逻辑，尝试找一个不太拥挤的位置
+                let top, left;
+                let attempts = 0;
+                let isValidPosition = false;
+
+                // 最多尝试50次，防止在极高密度下陷入死循环
+                while (!isValidPosition && attempts < 50) {
+                    top = 5 + Math.random() * 85;
+                    left = 5 + Math.random() * 85;
+                    isValidPosition = true;
+
+                    for (let pos of placedPositions) {
+                        // 新增逻辑：如果当前放置的是干扰项，且对比的也是干扰项，则允许它们互相堆叠（跳过距离检测）
+                        if (!itemData.isTarget && !pos.isTarget) {
+                            continue;
+                        }
+
+                        // 计算大致距离 (基于百分比的欧氏距离)
+                        let distance = Math.sqrt(Math.pow(pos.top - top, 2) + Math.pow(pos.left - left, 2));
+                        // 如果距离太近（小于 6%），则认为位置无效，重新生成
+                        if (distance < 6) {
+                            isValidPosition = false;
+                            break;
+                        }
+                    }
+                    attempts++;
+                }
+
+                // 将 isTarget 属性也记录下来，用于后续的堆叠判断
+                placedPositions.push({ top, left, isTarget: itemData.isTarget });
+                
+                el.style.top = `${top}%`;
+                el.style.left = `${left}%`;
+
+                // 随机旋转增加趣味性
+                const rotation = Math.random() * 60 - 30; // -30 to 30 degrees
+                el.style.transform = `rotate(${rotation}deg)`;
+
+                el.addEventListener('click', () => handleItemClick(el, itemData));
+                board.appendChild(el);
+            });
+        }
+
+        // 处理物品点击
+        function handleItemClick(element, itemData) {
+            if (!isGameRunning) return;
+
+            if (itemData.isTarget && currentTargets[itemData.id] > 0) {
+                // 正确点击
+                currentTargets[itemData.id]--;
+                
+                // 播放语音
+                speakWord(itemData.word);
+
+                // 动画和移除
+                element.classList.remove('hint-anim');
+                element.classList.add('found-anim');
+                
+                if(activeHintElement === element) {
+                    activeHintElement = null;
+                }
+
+                // 延迟后从DOM移除
+                setTimeout(() => {
+                    element.remove();
+                }, 500);
+
+                updateUI();
+                checkLevelComplete();
+
+            } else if (!itemData.isTarget) {
+                // 点击干扰项：轻微晃动反馈 (可选)
+                element.style.transform = `${element.style.transform} scale(1.2)`;
+                setTimeout(() => {
+                     element.style.transform = element.style.transform.replace(' scale(1.2)', '');
+                }, 200);
+            }
+        }
+
+        // 检查关卡是否完成
+        function checkLevelComplete() {
+            let totalRemaining = 0;
+            for (let id in currentTargets) {
+                totalRemaining += currentTargets[id];
+            }
+
+            if (totalRemaining === 0) {
+                isGameRunning = false;
+                setTimeout(() => {
+                    if(currentLevelIndex === levels.length - 1) {
+                         showModal("🎉 Victory!", "You found all the animals, great job!", "Play Again", () => { 
+                             document.getElementById('modal-screen').classList.add('hidden');
+                             startLevel(0); // 重新开始，利用原有的随机布局逻辑，每一次都不同
+                         });
+                    } else {
+                         showModal("✨ Level Complete!", "Well done! Ready for the next level?", "Next Level", () => {
+                            document.getElementById('modal-screen').classList.add('hidden');
+                            startLevel(currentLevelIndex + 1);
+                        });
+                    }
+                }, 1000); // 等待最后一个动画播完
+            }
+        }
+
+        // 使用提示
+        function useHint() {
+            if (hintsRemaining <= 0 || !isGameRunning) return;
+
+            // 清除之前的提示
+            if (activeHintElement) {
+                activeHintElement.classList.remove('hint-anim');
+            }
+
+            // 找出一个还需要寻找的元素
+            const boardElements = document.querySelectorAll('.game-item[data-target-id]');
+            const remainingTargets = Array.from(boardElements).filter(el => {
+                const id = el.dataset.targetId;
+                return currentTargets[id] > 0 && !el.classList.contains('found-anim');
+            });
+
+            if (remainingTargets.length > 0) {
+                hintsRemaining--;
+                updateUI();
+
+                // 随机选一个提示
+                const hintEl = remainingTargets[Math.floor(Math.random() * remainingTargets.length)];
+                hintEl.classList.add('hint-anim');
+                activeHintElement = hintEl;
+
+                // 3秒后取消高亮
+                setTimeout(() => {
+                    if (hintEl && hintEl.classList.contains('hint-anim')) {
+                        hintEl.classList.remove('hint-anim');
+                        if(activeHintElement === hintEl) activeHintElement = null;
+                    }
+                }, 3000);
+            }
+        }
+
+        // 显示模态框
+        function showModal(title, msg, btnText, action) {
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-msg').innerText = msg;
+            const btn = document.getElementById('modal-btn');
+            btn.innerText = btnText;
+            btn.onclick = action;
+            document.getElementById('modal-screen').classList.remove('hidden');
+        }
+
+    </script>
+</body>
+</html>
